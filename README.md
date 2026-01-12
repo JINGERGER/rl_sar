@@ -508,6 +508,8 @@ rl_sar/src/rl_sar/src/rl_real_<ROBOT>.cpp  # You can customize the forward() fun
 
 The B2+Z1 is a mobile manipulation platform combining Unitree B2 quadruped with Z1 robotic arm, enabling simultaneous RL-based locomotion and independent arm control.
 
+![B2+Z1 Demo](docs/images/b2_z1.gif)
+
 ### Architecture
 
 - **B2 Legs (12 DOF)**: Controlled via RL policy using `robot_joint_controller`

@@ -33,6 +33,7 @@ Support List:
 |Unitree-Go2W (go2w)|robot_lab (IsaacSim)|✅|✅|✅|
 |Unitree-B2 (b2)|robot_lab (IsaacSim)|✅|✅|⚪|
 |Unitree-B2W (b2w)|robot_lab (IsaacSim)|✅|✅|⚪|
+|**Unitree-B2+Z1 (b2_z1)**|**robot_lab (IsaacSim)**|**✅**|**❌**|**⚪**|
 |Unitree-G1 (g1)|robomimic/locomotion (IsaacGym)</br>robomimic/charleston (IsaacGym)</br>whole_body_tracking/dance_102 (IsaacSim)</br>whole_body_tracking/gangnam_style (IsaacSim)|✅|✅|✅|
 |FFTAI-GR1T1 (gr1t1)</br>(Only available on Ubuntu20.04)|legged_gym (IsaacGym)|✅|❌|⚪|
 |FFTAI-GR1T2 (gr1t2)</br>(Only available on Ubuntu20.04)|legged_gym (IsaacGym)|✅|❌|⚪|
@@ -501,6 +502,83 @@ src/rl_sar/fsm_robot/fsm_all.hpp
 
 # your real robot code
 rl_sar/src/rl_sar/src/rl_real_<ROBOT>.cpp  # You can customize the forward() function as needed to adapt to your policy
+```
+
+## B2+Z1 Robot Configuration
+
+The B2+Z1 is a mobile manipulation platform combining Unitree B2 quadruped with Z1 robotic arm, enabling simultaneous RL-based locomotion and independent arm control.
+
+### Architecture
+
+- **B2 Legs (12 DOF)**: Controlled via RL policy using `robot_joint_controller`
+- **Z1 Arm (6 DOF)**: Controlled via trajectory interface using `arm_controller`
+- **Mount**: Adjustable mounting box connecting arm to quadruped base
+
+### Launch in Gazebo
+
+Terminal 1 - Start Gazebo simulation:
+```bash
+source install/setup.bash
+ros2 launch b2_z1_description gazebo.launch.py
+```
+
+Terminal 2 - Run RL locomotion controller:
+```bash
+source install/setup.bash
+ros2 run rl_sar rl_sim_b2z1
+```
+
+### Keyboard Controls
+
+**Locomotion (Terminal 2):**
+- `0`: Stand up (enter GetUp state)
+- `1`: Start RL walking (enter RLLocomotion state)
+- `9`: Return to passive mode
+- `W/S`: Increase/decrease forward velocity
+- `A/D`: Increase/decrease lateral velocity  
+- `Q/E`: Rotate left/right
+- `Space`: Reset velocities to zero
+- `R`: Reset simulation
+- `Enter`: Pause/unpause simulation
+
+### Arm Control
+
+The Z1 arm can be controlled independently via action interface:
+
+```python
+# Example: Send trajectory to arm
+import rclpy
+from rclpy.action import ActionClient
+from control_msgs.action import FollowJointTrajectory
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+# Create action client
+client = ActionClient(node, FollowJointTrajectory, '/arm_controller/follow_joint_trajectory')
+
+# Send trajectory
+goal = FollowJointTrajectory.Goal()
+goal.trajectory.joint_names = ['z1_joint1', 'z1_joint2', 'z1_joint3', 
+                                'z1_joint4', 'z1_joint5', 'z1_joint6']
+# Add trajectory points...
+client.send_goal_async(goal)
+```
+
+See `test_z1_arm.py` for complete example.
+
+### Configuration Parameters
+
+Adjust mount position in `b2_z1_description/launch/gazebo.launch.py`:
+
+```python
+declare_z1_mount_x = DeclareLaunchArgument('z1_mount_x', default_value='0.0')  # Forward/back
+declare_z1_mount_y = DeclareLaunchArgument('z1_mount_y', default_value='0.0')  # Left/right
+declare_z1_mount_z = DeclareLaunchArgument('z1_mount_z', default_value='0.15') # Up/down
+declare_z1_mount_yaw = DeclareLaunchArgument('z1_mount_yaw', default_value='0.0') # Rotation
+```
+
+Or pass as launch arguments:
+```bash
+ros2 launch b2_z1_description gazebo.launch.py z1_mount_x:=0.1 z1_mount_z:=0.2
 ```
 
 ## Contributing

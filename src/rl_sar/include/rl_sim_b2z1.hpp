@@ -33,8 +33,8 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <std_srvs/srv/empty.hpp>
 #include <rcl_interfaces/srv/get_parameters.hpp>
-#include <trajectory_msgs/msg/joint_trajectory.hpp>
-#include <trajectory_msgs/msg/joint_trajectory_point.hpp>
+#include <robot_msgs/msg/robot_command.hpp>
+#include <robot_msgs/msg/robot_state.hpp>
 #endif
 
 class RL_Sim_B2Z1 : public RL
@@ -75,12 +75,14 @@ private:
     geometry_msgs::msg::Twist cmd_vel;
     sensor_msgs::msg::Joy joy_msg;
     
+    bool imu_data_received = false;  // Track if IMU data has been received
+    
     // Joint state tracking
     sensor_msgs::msg::JointState joint_states;
     
-    // Publishers for separate controllers
-    rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr leg_controller_publisher;
-    rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr arm_controller_publisher;
+    // Publisher for robot_joint_controller (unified controller for both B2 and Z1)
+    rclcpp::Publisher<robot_msgs::msg::RobotCommand>::SharedPtr robot_command_publisher;
+    robot_msgs::msg::RobotCommand robot_command_publisher_msg;
     
     // Subscribers
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr gazebo_imu_subscriber;

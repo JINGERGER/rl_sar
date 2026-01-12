@@ -160,9 +160,9 @@ public:
         percent_transition = 0.0f;
         rl.episode_length_buf = 0;
 
-        // read params from yaml
+        // read params from yaml - use b2 policy for b2_z1 legs
         rl.config_name = "robot_lab";
-        std::string robot_config_path = rl.robot_name + "/" + rl.config_name;
+        std::string robot_config_path = "b2/" + rl.config_name;
         try
         {
             rl.InitRL(robot_config_path);

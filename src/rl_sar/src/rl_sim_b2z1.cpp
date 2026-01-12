@@ -55,10 +55,10 @@ RL_Sim_B2Z1::RL_Sim_B2Z1(int argc, char **argv)
     // Read params from yaml - for B2+Z1 we use B2's params for RL control
     this->ReadYaml("b2", "base.yaml");
 
-    // Auto load FSM for B2 (the leg controller)
-    if (FSMManager::GetInstance().IsTypeSupported("b2"))
+    // Auto load FSM for B2_Z1 (uses b2 policy but b2_z1 FSM)
+    if (FSMManager::GetInstance().IsTypeSupported("b2_z1"))
     {
-        auto fsm_ptr = FSMManager::GetInstance().CreateFSM("b2", this);
+        auto fsm_ptr = FSMManager::GetInstance().CreateFSM("b2_z1", this);
         if (fsm_ptr)
         {
             this->fsm = *fsm_ptr;
@@ -66,7 +66,7 @@ RL_Sim_B2Z1::RL_Sim_B2Z1(int argc, char **argv)
     }
     else
     {
-        std::cout << LOGGER::ERROR << "[FSM] No FSM registered for robot: b2" << std::endl;
+        std::cout << LOGGER::ERROR << "[FSM] No FSM registered for robot: b2_z1" << std::endl;
     }
 
     // Init robot with 12 B2 leg joints (RL control)
@@ -89,12 +89,13 @@ RL_Sim_B2Z1::RL_Sim_B2Z1(int argc, char **argv)
     };
 
 #if defined(USE_ROS2)
-    // Publishers for B2 legs (effort control via trajectory) and Z1 arm (position control via trajectory)
-    leg_controller_publisher = ros2_node->create_publisher<trajectory_msgs::msg::JointTrajectory>(
-        "/leg_controller/joint_trajectory", rclcpp::SystemDefaultsQoS());
+    // Publisher for robot_joint_controller (handles only B2 leg joints)
+    robot_command_publisher = ros2_node->create_publisher<robot_msgs::msg::RobotCommand>(
+        ros_namespace + "robot_joint_controller/command", rclcpp::SystemDefaultsQoS());
     
-    arm_controller_publisher = ros2_node->create_publisher<trajectory_msgs::msg::JointTrajectory>(
-        "/arm_controller/joint_trajectory", rclcpp::SystemDefaultsQoS());
+    // Initialize robot command message with 12 B2 leg joints only
+    // Z1 arm is not controlled - will stay at default position
+    robot_command_publisher_msg.motor_command.resize(12);
 
     // Subscribers
     cmd_vel_subscriber = ros2_node->create_subscription<geometry_msgs::msg::Twist>(
@@ -116,6 +117,15 @@ RL_Sim_B2Z1::RL_Sim_B2Z1(int argc, char **argv)
         "/joint_states", rclcpp::SystemDefaultsQoS(),
         [this] (const sensor_msgs::msg::JointState::SharedPtr msg) {this->JointStateCallback(msg);}
     );
+
+    // Initialize IMU to safe defaults (identity quaternion)
+    gazebo_imu.orientation.w = 1.0;
+    gazebo_imu.orientation.x = 0.0;
+    gazebo_imu.orientation.y = 0.0;
+    gazebo_imu.orientation.z = 0.0;
+    gazebo_imu.angular_velocity.x = 0.0;
+    gazebo_imu.angular_velocity.y = 0.0;
+    gazebo_imu.angular_velocity.z = 0.0;
 
     // Services
     gazebo_pause_physics_client = ros2_node->create_client<std_srvs::srv::Empty>("/pause_physics");
@@ -180,11 +190,10 @@ RL_Sim_B2Z1::~RL_Sim_B2Z1()
 
 void RL_Sim_B2Z1::GetState(RobotState<float> *state)
 {
-#if defined(USE_ROS2)
+    // Use gazebo_imu data (initialized to safe defaults in constructor)
     const auto &orientation = this->gazebo_imu.orientation;
     const auto &angular_velocity = this->gazebo_imu.angular_velocity;
-#endif
-
+    
     state->imu.quaternion[0] = orientation.w;
     state->imu.quaternion[1] = orientation.x;
     state->imu.quaternion[2] = orientation.y;
@@ -206,38 +215,25 @@ void RL_Sim_B2Z1::GetState(RobotState<float> *state)
 void RL_Sim_B2Z1::SetCommand(const RobotCommand<float> *command)
 {
 #if defined(USE_ROS2)
-    // Publish B2 leg commands using RL output
-    trajectory_msgs::msg::JointTrajectory leg_traj;
-    leg_traj.header.stamp = ros2_node->now();
-    leg_traj.joint_names = leg_joint_names;
-    
-    trajectory_msgs::msg::JointTrajectoryPoint leg_point;
-    leg_point.positions.resize(12);
-    leg_point.velocities.resize(12);
-    leg_point.effort.resize(12);
-    leg_point.time_from_start = rclcpp::Duration::from_seconds(0.001);
-    
+    // Publish command for B2 leg joints only (12 DOF)
+    // Z1 arm joints are not controlled - they will stay at default position
     for (int i = 0; i < 12; ++i)
     {
-        leg_point.positions[i] = command->motor_command.q[i];
-        leg_point.velocities[i] = command->motor_command.dq[i];
-        leg_point.effort[i] = command->motor_command.tau[i];
+        robot_command_publisher_msg.motor_command[i].q = command->motor_command.q[i];
+        robot_command_publisher_msg.motor_command[i].dq = command->motor_command.dq[i];
+        robot_command_publisher_msg.motor_command[i].tau = command->motor_command.tau[i];
+        robot_command_publisher_msg.motor_command[i].kp = command->motor_command.kp[i];
+        robot_command_publisher_msg.motor_command[i].kd = command->motor_command.kd[i];
     }
     
-    leg_traj.points.push_back(leg_point);
-    leg_controller_publisher->publish(leg_traj);
+    // Debug: Print first joint command every 100 calls
+    static int cmd_count = 0;
+    if (++cmd_count % 100 == 0) {
+        std::cout << "[CMD] Joint0: q=" << robot_command_publisher_msg.motor_command[0].q 
+                  << " tau=" << robot_command_publisher_msg.motor_command[0].tau << std::endl;
+    }
     
-    // Publish Z1 arm commands - keep at default/home position
-    trajectory_msgs::msg::JointTrajectory arm_traj;
-    arm_traj.header.stamp = ros2_node->now();
-    arm_traj.joint_names = arm_joint_names;
-    
-    trajectory_msgs::msg::JointTrajectoryPoint arm_point;
-    arm_point.positions = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};  // Home position
-    arm_point.time_from_start = rclcpp::Duration::from_seconds(0.001);
-    
-    arm_traj.points.push_back(arm_point);
-    arm_controller_publisher->publish(arm_traj);
+    robot_command_publisher->publish(robot_command_publisher_msg);
 #endif
 }
 
@@ -246,6 +242,18 @@ void RL_Sim_B2Z1::RobotControl()
     this->GetState(&this->robot_state);
 
     this->StateController(&this->robot_state, &this->robot_command);
+    
+    // Debug: Print when WASD keys are pressed
+    if (this->control.current_keyboard == Input::Keyboard::W ||
+        this->control.current_keyboard == Input::Keyboard::A ||
+        this->control.current_keyboard == Input::Keyboard::S ||
+        this->control.current_keyboard == Input::Keyboard::D ||
+        this->control.current_keyboard == Input::Keyboard::Q ||
+        this->control.current_keyboard == Input::Keyboard::E ||
+        this->control.current_keyboard == Input::Keyboard::Space)
+    {
+        std::cout << "[KEY PRESSED] Control: x=" << this->control.x << " y=" << this->control.y << " yaw=" << this->control.yaw << std::endl;
+    }
 
     if (this->control.current_keyboard == Input::Keyboard::R || this->control.current_gamepad == Input::Gamepad::RB_Y)
     {
@@ -286,6 +294,7 @@ void RL_Sim_B2Z1::RobotControl()
 void RL_Sim_B2Z1::GazeboImuCallback(const sensor_msgs::msg::Imu::SharedPtr msg)
 {
     this->gazebo_imu = *msg;
+    this->imu_data_received = true;
 }
 
 void RL_Sim_B2Z1::JointStateCallback(const sensor_msgs::msg::JointState::SharedPtr msg)
@@ -355,6 +364,12 @@ void RL_Sim_B2Z1::JoyCallback(const sensor_msgs::msg::Joy::SharedPtr msg)
 
 std::vector<float> RL_Sim_B2Z1::Forward()
 {
+    // If model not initialized yet (before entering RLLocomotion state), return empty actions
+    if (!this->model)
+    {
+        return std::vector<float>(12, 0.0f);  // Return zero actions for 12 leg joints
+    }
+
     std::unique_lock<std::mutex> lock(this->model_mutex, std::try_to_lock);
 
     // If model is being reinitialized, return previous actions to avoid blocking
@@ -390,7 +405,55 @@ std::vector<float> RL_Sim_B2Z1::Forward()
 
 void RL_Sim_B2Z1::RunModel()
 {
-    this->Forward();
+    if (this->rl_init_done && simulation_running)
+    {
+        this->episode_length_buf += 1;
+        
+        // Update observations from current state
+        this->obs.ang_vel = this->robot_state.imu.gyroscope;
+        
+        // Update command observations from keyboard or cmd_vel
+        this->obs.commands = {this->control.x, this->control.y, this->control.yaw};
+        if (this->control.navigation_mode)
+        {
+            this->obs.commands = {(float)this->cmd_vel.linear.x, (float)this->cmd_vel.linear.y, (float)this->cmd_vel.angular.z};
+        }
+        
+        // Debug output every 100 iterations to avoid spam
+        if (this->episode_length_buf % 100 == 0)
+        {
+            std::cout << "[MODE:" << (this->control.navigation_mode ? "CMD_VEL" : "KEYBOARD") 
+                      << "] x=" << this->obs.commands[0] 
+                      << " y=" << this->obs.commands[1] 
+                      << " yaw=" << this->obs.commands[2] << std::endl;
+        }
+        
+        this->obs.base_quat = this->robot_state.imu.quaternion;
+        this->obs.dof_pos = this->robot_state.motor_state.q;
+        this->obs.dof_vel = this->robot_state.motor_state.dq;
+
+        this->obs.actions = this->Forward();
+        
+        // Debug: Print actions every 100 iterations
+        if (this->episode_length_buf % 100 == 0 && !this->obs.actions.empty()) {
+            std::cout << "[ACTIONS] action0=" << this->obs.actions[0] 
+                      << " action1=" << this->obs.actions[1] << std::endl;
+        }
+        this->ComputeOutput(this->obs.actions, this->output_dof_pos, this->output_dof_vel, this->output_dof_tau);
+
+        if (!this->output_dof_pos.empty())
+        {
+            output_dof_pos_queue.push(this->output_dof_pos);
+        }
+        if (!this->output_dof_vel.empty())
+        {
+            output_dof_vel_queue.push(this->output_dof_vel);
+        }
+        if (!this->output_dof_tau.empty())
+        {
+            output_dof_tau_queue.push(this->output_dof_tau);
+        }
+    }
 }
 
 void RL_Sim_B2Z1::Plot()

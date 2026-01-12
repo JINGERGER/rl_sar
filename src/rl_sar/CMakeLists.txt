@@ -425,6 +425,34 @@ if(NOT USE_CMAKE)
     endif()
 endif()
 
+# executable for rl sim b2z1 (B2+Z1 specific controller)
+if(NOT USE_CMAKE)
+    add_executable(rl_sim_b2z1 src/rl_sim_b2z1.cpp)
+    target_link_libraries(rl_sim_b2z1
+        rl_sdk
+        observation_buffer
+        ${YAML_CPP_LIBRARIES}
+        Threads::Threads
+    )
+    if($ENV{ROS_DISTRO} MATCHES "noetic")
+        target_link_libraries(rl_sim_b2z1 ${catkin_LIBRARIES})
+    elseif($ENV{ROS_DISTRO} MATCHES "foxy|humble")
+        ament_target_dependencies(rl_sim_b2z1
+            joint_state_broadcaster
+            robot_state_publisher
+            rclcpp
+            gazebo_ros
+            std_msgs
+            robot_msgs
+            rclpy
+            gazebo_msgs
+            std_srvs
+            geometry_msgs
+        )
+        install(TARGETS rl_sim_b2z1 DESTINATION lib/${PROJECT_NAME})
+    endif()
+endif()
+
 # executable for rl real a1
 if(SYSTEM_TYPE STREQUAL "Linux")
     add_executable(rl_real_a1 src/rl_real_a1.cpp)
